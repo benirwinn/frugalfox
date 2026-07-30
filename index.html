@@ -1321,12 +1321,64 @@ const googleProvider = new GoogleAuthProvider();
     <div class="card">
       <h2>Savings over time</h2>
       <div class="chart-wrap">${renderSavingsChartSvg(series)}</div>
+      <h3>Quarterly checkpoints</h3>
+      ${renderQuarterlyCheckpoints(series)}
+      <h3 style="margin-top:16px;">Interest by tax year</h3>
+      ${renderInterestByTaxYear(series)}
     </div>
     `;
   }
 
+  function isQuarterEndMonth(d){
+    const m = d.getMonth(); // 0-indexed: Mar=2, Jun=5, Sep=8, Dec=11
+    return m === 2 || m === 5 || m === 8 || m === 11;
+  }
+
   function cycleShortLabel(key){
     return parseIso(key).toLocaleDateString('en-GB', {month:'short', year:'2-digit'});
+  }
+
+  function ukTaxYearStartYear(d){
+    const year = d.getFullYear();
+    const aprilStart = new Date(year, 3, 6); // 6 April
+    return d >= aprilStart ? year : year - 1;
+  }
+  function ukTaxYearLabel(startYear){
+    return `${startYear}–${String(startYear+1).slice(-2)}`;
+  }
+
+  function renderInterestByTaxYear(series){
+    const totals = {};
+    const hasData = {};
+    series.forEach(s=>{
+      const raw = (s.data||{}).interest;
+      if(raw === undefined) return;
+      const ty = ukTaxYearStartYear(parseIso(s.key));
+      hasData[ty] = true;
+      totals[ty] = (totals[ty]||0) + (Number(raw)||0);
+    });
+    const years = Object.keys(hasData).map(Number).sort((a,b)=>a-b);
+    if(!years.length){
+      return `<div class="suggestion">Log some interest in the ledger above and your tax-year totals will show up here.</div>`;
+    }
+    const todayTaxYear = ukTaxYearStartYear(new Date());
+    const items = years.map(y=>{
+      const label = ukTaxYearLabel(y) + (y === todayTaxYear ? ' (so far)' : '');
+      return `<div class="stat"><div class="label">${label} tax year</div><div class="value grow">${fmt(totals[y])}</div></div>`;
+    }).join('');
+    return `<div class="summary-row" style="flex-wrap:wrap; row-gap:14px;">${items}</div>`;
+  }
+
+  function renderQuarterlyCheckpoints(series){
+    const checkpoints = series.filter(s => isQuarterEndMonth(parseIso(s.key)));
+    if(!checkpoints.length){
+      return `<div class="suggestion">Once your plan stretches to a March, June, September or December, your balance at each will show up here.</div>`;
+    }
+    const items = checkpoints.map(cp=>{
+      const label = parseIso(cp.key).toLocaleDateString('en-GB', {month:'long', year:'numeric'});
+      return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value ${cp.balance<0?'spend':'grow'}">${fmt(cp.balance)}</div></div>`;
+    }).join('');
+    return `<div class="summary-row" style="flex-wrap:wrap; row-gap:14px;">${items}</div>`;
   }
 
   function renderSavingsChartSvg(series){
@@ -1348,10 +1400,22 @@ const googleProvider = new GoogleAuthProvider();
     const areaPts = `${xOf(0).toFixed(1)},${yOf(minV).toFixed(1)} ${linePts} ${xOf(n-1).toFixed(1)},${yOf(minV).toFixed(1)}`;
     const zeroY = yOf(0).toFixed(1);
 
-    const labelCount = Math.min(n, 6);
-    const idxs = [...new Set(Array.from({length:labelCount}, (_,i)=> Math.round(i*(n-1)/(labelCount-1||1))))];
+    const quarterIdxs = series.map((s,i)=>({i, isQ: isQuarterEndMonth(parseIso(s.key))})).filter(o=>o.isQ).map(o=>o.i);
+    let idxs;
+    if(quarterIdxs.length >= 2){
+      if(quarterIdxs.length > 6){
+        const step = (quarterIdxs.length-1)/5;
+        idxs = [...new Set(Array.from({length:6}, (_,i)=> quarterIdxs[Math.round(i*step)]))];
+      } else {
+        idxs = quarterIdxs;
+      }
+    } else {
+      const labelCount = Math.min(n, 6);
+      idxs = [...new Set(Array.from({length:labelCount}, (_,i)=> Math.round(i*(n-1)/(labelCount-1||1))))];
+    }
+    const quarterSet = new Set(quarterIdxs);
     const xLabels = idxs.map(i => `<text x="${xOf(i).toFixed(1)}" y="${h-6}" font-size="9" fill="#93A4C2" text-anchor="middle" font-family="Inter, sans-serif">${cycleShortLabel(series[i].key)}</text>`).join('');
-    const dots = idxs.map(i => `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(series[i].balance).toFixed(1)}" r="2.8" fill="#00B87C" />`).join('');
+    const dots = idxs.map(i => `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(series[i].balance).toFixed(1)}" r="${quarterSet.has(i)?3.6:2.8}" fill="${quarterSet.has(i)?'#FFB300':'#00B87C'}" />`).join('');
     const yTop = `<text x="${padL-8}" y="${padT+4}" font-size="9" fill="#93A4C2" text-anchor="end" font-family="'IBM Plex Mono', monospace">${fmtCompact(maxV)}</text>`;
     const yBottom = `<text x="${padL-8}" y="${h-padB}" font-size="9" fill="#93A4C2" text-anchor="end" font-family="'IBM Plex Mono', monospace">${fmtCompact(minV)}</text>`;
 
