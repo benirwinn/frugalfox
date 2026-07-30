@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Frugal Fox — Budget & Savings Tracker</title>
+<title>Frugal Fox — Spending & Savings Tracker</title>
 
 <!-- iOS "Add to Home Screen" support -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1101,9 +1101,11 @@ const googleProvider = new GoogleAuthProvider();
         ${cats.length ? `
         <div class="summary-row" style="margin-bottom:14px;">
           <div class="stat"><div class="label">Budget</div><div class="value">${fmt(groupBudget)}</div></div>
+          ${g.key !== 'rent' ? `
           <div class="stat"><div class="label">Spent</div><div class="value ${groupSpent>groupBudget && groupBudget>0?'spend':''}">${fmt(groupSpent)}</div></div>
           <div class="stat"><div class="label">Should have left</div><div class="value">${fmt(shouldHaveLeftStat(groupBudget, pacePercent))}</div></div>
           <div class="stat"><div class="label">Left</div><div class="value ${groupBudget-groupSpent<0?'spend':'grow'}">${fmt(groupBudget-groupSpent)}</div></div>
+          ` : ''}
         </div>
         ${catRows}` : `<div class="empty" style="padding:10px 0 18px;"><div class="big">${copy.emptyBig}</div><div class="small">${copy.emptySmall}</div></div>`}
         <button class="add-toggle" data-action="toggle-panel" data-panel="addMonthlyForm-${g.key}">${copy.addLabel}</button>
@@ -1614,7 +1616,7 @@ const googleProvider = new GoogleAuthProvider();
 
   function renderSignIn(errorMsg){
     welcomeContent.innerHTML = `
-      <h1>Hello. Welcome to Frugal Fox, your personal budgeting and savings tracker.</h1>
+      <h1>Hello. Welcome to Frugal Fox, your personal spending and savings tracker.</h1>
       <button class="btn full" data-action="sign-in">Sign in with Google</button>
       ${errorMsg ? `<p style="color:#F2523D; font-size:12.5px; margin-top:14px; line-height:1.5;">${escapeHtml(errorMsg)}</p>` : ''}
     `;
