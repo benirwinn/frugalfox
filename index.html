@@ -1170,6 +1170,8 @@ const googleProvider = new GoogleAuthProvider();
     });
     return net;
   }
+  const CARRY_FORWARD_COLS = ['rent', 'moneyIn'];
+
   function computeSavingsSeries(maxOffsetWanted){
     const keys = Object.keys(state.savings.months||{});
     const nowStart = savingsCycleStart(0);
@@ -1182,13 +1184,22 @@ const googleProvider = new GoogleAuthProvider();
     const maxOffset = Math.max(maxOffsetWanted, 0);
     let balance = Number(state.savings.startingBalance)||0;
     const series = [];
+    const lastKnown = {};
     for(let off=minOffset; off<=maxOffset; off++){
       const cs = savingsCycleStart(off);
       const key = isoDate(cs);
-      const m = state.savings.months[key] || {};
-      const net = savingsNet(m);
+      const raw = state.savings.months[key] || {};
+      const effective = Object.assign({}, raw);
+      CARRY_FORWARD_COLS.forEach(colKey=>{
+        if(raw[colKey] !== undefined){
+          lastKnown[colKey] = raw[colKey];
+        } else if(lastKnown[colKey] !== undefined){
+          effective[colKey] = lastKnown[colKey];
+        }
+      });
+      const net = savingsNet(effective);
       balance += net;
-      series.push({ offset: off, key, net, balance, data: m });
+      series.push({ offset: off, key, net, balance, data: effective, rawData: raw });
     }
     return { series, minOffset, maxOffset };
   }
@@ -1205,8 +1216,10 @@ const googleProvider = new GoogleAuthProvider();
     const calId = 'savingsCycleCal';
     const calOpen = openPanels.has(calId);
 
+    const rawM = current.rawData || {};
     const columnRows = s.columns.map(col=>{
       const editKey = `edit-savingscol-${col.key}`;
+      const isCarried = CARRY_FORWARD_COLS.includes(col.key) && rawM[col.key] === undefined && m[col.key] !== undefined;
       const labelHtml = openPanels.has(editKey) ? `
         <span class="row-inline">
           <input type="text" id="editSavColLabel-${col.key}" value="${escapeHtml(col.label)}" style="max-width:180px;">
@@ -1216,6 +1229,7 @@ const googleProvider = new GoogleAuthProvider();
         <span class="row-inline">
           <label style="font-size:12.5px; font-weight:600;">${escapeHtml(col.label)} ${SAVINGS_COLUMN_SIGN[col.key]>0 ? '<span class=\"tag-plus\">+</span>' : '<span class=\"tag-minus\">–</span>'}</label>
           <button class="iconbtn" data-action="toggle-panel" data-panel="${editKey}" title="Rename">✏️</button>
+          ${isCarried ? `<span class="link-badge" title="Carried forward from an earlier cycle — edit to override just this one">same as before</span>` : ''}
         </span>
       `;
       return `
