@@ -387,7 +387,7 @@ const googleProvider = new GoogleAuthProvider();
     }, 400);
   }
 
-  const SAVINGS_COLUMN_SIGN = { moneyIn:1, extraIn:1, rent:-1, extraOut:-1, nonCC:-1, cc:-1, interest:1 };
+  const LEGACY_SAVINGS_COLUMN_SIGN = { moneyIn:1, extraIn:1, rent:-1, extraOut:-1, nonCC:-1, cc:-1, interest:1 };
 
   function defaultGroups(){
     return [
@@ -399,13 +399,13 @@ const googleProvider = new GoogleAuthProvider();
 
   function defaultSavingsColumns(){
     return [
-      { key:'moneyIn', label:'Money In' },
-      { key:'extraIn', label:'Extra In' },
-      { key:'rent', label:'Rent' },
-      { key:'extraOut', label:'Extra Out' },
-      { key:'nonCC', label:'Non-credit card spending' },
-      { key:'cc', label:'Credit card spending' },
-      { key:'interest', label:'Interest' }
+      { key:'moneyIn', label:'Money In', sign: 1 },
+      { key:'extraIn', label:'Extra In', sign: 1 },
+      { key:'rent', label:'Rent', sign: -1 },
+      { key:'extraOut', label:'Extra Out', sign: -1 },
+      { key:'nonCC', label:'Non-credit card spending', sign: -1 },
+      { key:'cc', label:'Credit card spending', sign: -1 },
+      { key:'interest', label:'Interest', sign: 1 }
     ];
   }
 
@@ -496,6 +496,11 @@ const googleProvider = new GoogleAuthProvider();
       s.savings.months = {};
       s.savings.goal = null;
     }
+    s.savings.columns.forEach(col=>{
+      if(col.sign === undefined){
+        col.sign = LEGACY_SAVINGS_COLUMN_SIGN[col.key] !== undefined ? LEGACY_SAVINGS_COLUMN_SIGN[col.key] : 1;
+      }
+    });
     if(!s.savings.months) s.savings.months = {};
 
     return s;
@@ -1166,11 +1171,10 @@ const googleProvider = new GoogleAuthProvider();
     const m = monthData || {};
     let net = 0;
     state.savings.columns.forEach(col=>{
-      net += (Number(m[col.key])||0) * SAVINGS_COLUMN_SIGN[col.key];
+      net += (Number(m[col.key])||0) * (col.sign || 1);
     });
     return net;
   }
-  const CARRY_FORWARD_COLS = ['rent', 'moneyIn'];
 
   function computeSavingsSeries(maxOffsetWanted){
     const keys = Object.keys(state.savings.months||{});
@@ -1184,22 +1188,13 @@ const googleProvider = new GoogleAuthProvider();
     const maxOffset = Math.max(maxOffsetWanted, 0);
     let balance = Number(state.savings.startingBalance)||0;
     const series = [];
-    const lastKnown = {};
     for(let off=minOffset; off<=maxOffset; off++){
       const cs = savingsCycleStart(off);
       const key = isoDate(cs);
-      const raw = state.savings.months[key] || {};
-      const effective = Object.assign({}, raw);
-      CARRY_FORWARD_COLS.forEach(colKey=>{
-        if(raw[colKey] !== undefined){
-          lastKnown[colKey] = raw[colKey];
-        } else if(lastKnown[colKey] !== undefined){
-          effective[colKey] = lastKnown[colKey];
-        }
-      });
-      const net = savingsNet(effective);
+      const m = state.savings.months[key] || {};
+      const net = savingsNet(m);
       balance += net;
-      series.push({ offset: off, key, net, balance, data: effective, rawData: raw });
+      series.push({ offset: off, key, net, balance, data: m });
     }
     return { series, minOffset, maxOffset };
   }
@@ -1216,10 +1211,8 @@ const googleProvider = new GoogleAuthProvider();
     const calId = 'savingsCycleCal';
     const calOpen = openPanels.has(calId);
 
-    const rawM = current.rawData || {};
     const columnRows = s.columns.map(col=>{
       const editKey = `edit-savingscol-${col.key}`;
-      const isCarried = CARRY_FORWARD_COLS.includes(col.key) && rawM[col.key] === undefined && m[col.key] !== undefined;
       const labelHtml = openPanels.has(editKey) ? `
         <span class="row-inline">
           <input type="text" id="editSavColLabel-${col.key}" value="${escapeHtml(col.label)}" style="max-width:180px;">
@@ -1227,9 +1220,9 @@ const googleProvider = new GoogleAuthProvider();
         </span>
       ` : `
         <span class="row-inline">
-          <label style="font-size:12.5px; font-weight:600;">${escapeHtml(col.label)} ${SAVINGS_COLUMN_SIGN[col.key]>0 ? '<span class=\"tag-plus\">+</span>' : '<span class=\"tag-minus\">–</span>'}</label>
+          <label style="font-size:12.5px; font-weight:600;">${escapeHtml(col.label)} ${col.sign>0 ? '<span class=\"tag-plus\">+</span>' : '<span class=\"tag-minus\">–</span>'}</label>
           <button class="iconbtn" data-action="toggle-panel" data-panel="${editKey}" title="Rename">✏️</button>
-          ${isCarried ? `<span class="link-badge" title="Carried forward from an earlier cycle — edit to override just this one">same as before</span>` : ''}
+          <button class="iconbtn" data-action="delete-savingscol" data-col="${col.key}" title="Remove this column">✕</button>
         </span>
       `;
       return `
@@ -1239,6 +1232,20 @@ const googleProvider = new GoogleAuthProvider();
           data-action="set-savings-value" data-cycle="${current.key}" data-col="${col.key}" style="width:110px;">
       </div>`;
     }).join('');
+
+    const addColOpen = openPanels.has('addSavingsCol');
+    const addColHtml = `
+      <button class="add-toggle small" data-action="toggle-panel" data-panel="addSavingsCol" style="margin-top:10px;">+ Add column</button>
+      <div id="addSavingsCol" style="display:${addColOpen?'block':'none'}; margin-top:8px;">
+        <div class="add-form">
+          <input type="text" id="newSavColName" placeholder="Column name (e.g. Bonus, Car finance)">
+          <select id="newSavColSign">
+            <option value="1">Adds to savings (+)</option>
+            <option value="-1">Subtracts from savings (–)</option>
+          </select>
+          <button class="btn small" data-action="add-savingscol">Add</button>
+        </div>
+      </div>`;
 
     const netThisCycle = savingsNet(m);
 
@@ -1304,6 +1311,7 @@ const googleProvider = new GoogleAuthProvider();
       <div class="savings-ledger">
         ${columnRows}
       </div>
+      ${addColHtml}
       <div class="summary-row" style="margin-top:14px;">
         <div class="stat"><div class="label">Saved this cycle</div><div class="value ${netThisCycle<0?'spend':'grow'}">${fmt(netThisCycle)}</div></div>
         <div class="stat"><div class="label">Balance</div><div class="value grow">${fmt(current.balance)}</div></div>
@@ -1565,6 +1573,20 @@ const googleProvider = new GoogleAuthProvider();
         if(label) col.label = label;
       }
       openPanels.delete('edit-savingscol-'+btn.dataset.col);
+      scheduleSave(); render();
+    }
+    else if(action === 'add-savingscol'){
+      const nameInput = document.getElementById('newSavColName');
+      const signSelect = document.getElementById('newSavColSign');
+      const name = nameInput.value.trim();
+      if(!name) return;
+      state.savings.columns.push({ key: uid(), label: name, sign: parseInt(signSelect.value, 10) });
+      openPanels.delete('addSavingsCol');
+      scheduleSave(); render();
+    }
+    else if(action === 'delete-savingscol'){
+      if(!confirm('Remove this column from the savings ledger? Any amounts already logged in it will be lost.')) return;
+      state.savings.columns = state.savings.columns.filter(c=>c.key!==btn.dataset.col);
       scheduleSave(); render();
     }
     else if(action === 'remove-savings-goal'){
