@@ -1101,7 +1101,7 @@ const googleProvider = new GoogleAuthProvider();
         ${cats.length ? `
         <div class="summary-row" style="margin-bottom:14px;">
           <div class="stat"><div class="label">Budget</div><div class="value">${fmt(groupBudget)}</div></div>
-          ${g.key !== 'rent' ? `
+          ${(g.key !== 'rent' && g.key !== 'bills') ? `
           <div class="stat"><div class="label">Spent</div><div class="value ${groupSpent>groupBudget && groupBudget>0?'spend':''}">${fmt(groupSpent)}</div></div>
           <div class="stat"><div class="label">Should have left</div><div class="value">${fmt(shouldHaveLeftStat(groupBudget, pacePercent))}</div></div>
           <div class="stat"><div class="label">Left</div><div class="value ${groupBudget-groupSpent<0?'spend':'grow'}">${fmt(groupBudget-groupSpent)}</div></div>
