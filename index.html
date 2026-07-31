@@ -686,7 +686,7 @@ const googleProvider = new GoogleAuthProvider();
     const previewHtml = previewRows.map(p=>`
       <div class="expense-row">
         <span class="note">${p.date ? fmtDayMonth(parseIso(p.date)) : '(bad date)'} — ${escapeHtml(p.note || '(no note)')}</span>
-        <span class="amt">${isNaN(p.amt) ? '?' : fmt(Math.abs(p.amt))}</span>
+        <span class="amt">${isNaN(p.amt) ? '?' : fmt(-p.amt)}</span>
       </div>`).join('');
     const validCount = imp.dataRows.filter(r=>{
       const date = parseCsvDate(r[imp.dateCol]);
@@ -707,7 +707,7 @@ const googleProvider = new GoogleAuthProvider();
       </div>
       <label class="row-inline" style="font-size:12.5px; margin-bottom:8px;">
         <input type="checkbox" ${imp.onlyNegative?'checked':''} data-action="csv-toggle-negative" data-entrycat="${entryCatId}">
-        Only import negative amounts (money out) — turn off if every row in this file is already a purchase
+        Only import purchases — turn off to also bring in refunds and other credits (they'll be added as negative amounts, reducing your total)
       </label>
       <div class="expense-list">${previewHtml}</div>
       <div class="suggestion">${validCount} transaction(s) will be imported. Showing up to 5 rows as a preview.</div>
@@ -721,7 +721,7 @@ const googleProvider = new GoogleAuthProvider();
   function runwayBar(budget, spent, pacePercent){
     const b = Number(budget)||0;
     const s = Number(spent)||0;
-    const fillPct = b>0 ? Math.min((s/b)*100, 100) : (s>0 ? 100 : 0);
+    const fillPct = b>0 ? Math.max(0, Math.min((s/b)*100, 100)) : (s>0 ? 100 : 0);
     const over = s > b && b > 0;
     const cls = over ? 'spend' : 'grow';
     const pace = Math.max(0, Math.min(100, pacePercent));
@@ -757,7 +757,7 @@ const googleProvider = new GoogleAuthProvider();
         <div class="expense-row" style="gap:6px;">
           <input type="date" id="editExpenseDate-${e.id}" value="${e.date}" style="max-width:120px; font-family:var(--font-mono); font-size:11.5px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
           <input type="text" id="editExpenseNote-${e.id}" value="${escapeHtml(e.note||'')}" placeholder="Note" style="flex:1; min-width:60px; font-size:12px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
-          <input type="number" id="editExpenseAmount-${e.id}" value="${e.amount}" step="0.01" min="0" style="width:70px; font-family:var(--font-mono); font-size:11.5px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
+          <input type="number" id="editExpenseAmount-${e.id}" value="${e.amount}" step="0.01" style="width:70px; font-family:var(--font-mono); font-size:11.5px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
           <button class="iconbtn" data-action="save-expense-edit" data-entrycat="${entryCatId}" data-entry="${e.id}" title="Save">✔</button>
           <button class="iconbtn" data-action="cancel-edit" data-panel="${editKey}" title="Cancel">✕</button>
         </div>`;
@@ -783,7 +783,7 @@ const googleProvider = new GoogleAuthProvider();
         <div class="add-form">
           <input type="date" id="${formId}-date" value="${dateDefault}" style="max-width:135px;">
           <input type="text" id="${formId}-note" placeholder="What was it? (optional)">
-          <input type="number" id="${formId}-amount" step="0.01" min="0" placeholder="£">
+          <input type="number" id="${formId}-amount" step="0.01" placeholder="£ (use a minus for refunds)">
           <button class="btn small" data-action="add-expense" data-entrycat="${entryCatId}" data-form="${formId}">Add</button>
         </div>
       </div>
@@ -1749,7 +1749,7 @@ const googleProvider = new GoogleAuthProvider();
       const noteInput = document.getElementById(formId + '-note');
       const amountInput = document.getElementById(formId + '-amount');
       const amount = parseFloat(amountInput.value);
-      if(!amount || amount <= 0) return;
+      if(isNaN(amount) || amount === 0) return;
       const date = dateInput.value || isoDate(new Date());
       if(!state.entries[entryCatId]) state.entries[entryCatId] = [];
       state.entries[entryCatId].push({ id: uid(), date, note: noteInput.value.trim(), amount });
@@ -1769,7 +1769,7 @@ const googleProvider = new GoogleAuthProvider();
       const noteInput = document.getElementById('editExpenseNote-'+entryId);
       const amountInput = document.getElementById('editExpenseAmount-'+entryId);
       const amount = parseFloat(amountInput.value);
-      if(!amount || amount <= 0) return;
+      if(isNaN(amount) || amount === 0) return;
       const list = state.entries[entryCatId];
       const entry = list && list.find(e=>e.id===entryId);
       if(entry){
@@ -1795,7 +1795,7 @@ const googleProvider = new GoogleAuthProvider();
         const amtRaw = parseCsvAmount(r[imp.amountCol]);
         if(!date || isNaN(amtRaw) || amtRaw === 0) return;
         if(imp.onlyNegative && amtRaw >= 0) return;
-        const amount = Math.abs(amtRaw);
+        const amount = -amtRaw; // bank debit (negative) -> positive spend; bank credit (positive) -> negative refund
         const note = imp.noteCol>=0 ? (r[imp.noteCol]||'').trim() : '';
         state.entries[entryCatId].push({ id: uid(), date, note, amount });
         count++;
