@@ -1227,6 +1227,9 @@ const googleProvider = new GoogleAuthProvider();
     const calOpen = openPanels.has(calId);
     const editKey = `edit-group-${g.key}`;
     const isEditingGroup = openPanels.has(editKey);
+    const groupIndex = state.monthly.groups.indexOf(g);
+    const isFirst = groupIndex === 0;
+    const isLast = groupIndex === state.monthly.groups.length - 1;
 
     const headHtml = isEditingGroup ? `
       <div class="add-form" style="margin-bottom:14px;">
@@ -1238,6 +1241,8 @@ const googleProvider = new GoogleAuthProvider();
       <div class="section-head">
         <h2>${escapeHtml(g.label)}</h2>
         <div class="row-inline">
+          <button class="iconbtn" data-action="move-group-up" data-group="${g.key}" title="Move up" ${isFirst?'disabled style="opacity:0.3;"':''}>▲</button>
+          <button class="iconbtn" data-action="move-group-down" data-group="${g.key}" title="Move down" ${isLast?'disabled style="opacity:0.3;"':''}>▼</button>
           <button class="iconbtn" data-action="toggle-panel" data-panel="${editKey}" title="Rename section">✏️</button>
           <button class="iconbtn" data-action="delete-monthly-group" data-group="${g.key}" title="Remove this section">✕</button>
         </div>
@@ -1756,6 +1761,22 @@ const googleProvider = new GoogleAuthProvider();
       }
       openPanels.delete('edit-group-'+btn.dataset.group);
       scheduleSave(); render();
+    }
+    else if(action === 'move-group-up'){
+      const groups = state.monthly.groups;
+      const i = groups.findIndex(g=>g.key===btn.dataset.group);
+      if(i > 0){
+        [groups[i-1], groups[i]] = [groups[i], groups[i-1]];
+        scheduleSave(); render();
+      }
+    }
+    else if(action === 'move-group-down'){
+      const groups = state.monthly.groups;
+      const i = groups.findIndex(g=>g.key===btn.dataset.group);
+      if(i >= 0 && i < groups.length-1){
+        [groups[i], groups[i+1]] = [groups[i+1], groups[i]];
+        scheduleSave(); render();
+      }
     }
     else if(action === 'delete-monthly-group'){
       if(state.monthly.groups.length <= 1){
