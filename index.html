@@ -330,11 +330,8 @@
 
 <div id="customConfirmOverlay" style="display:none; position:fixed; inset:0; background:rgba(21,34,56,0.45); z-index:200; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--surface); border-radius:12px; padding:22px; max-width:360px; width:100%; box-shadow:var(--shadow);">
-    <p id="customConfirmMessage" style="margin:0 0 20px; font-size:14px; line-height:1.5; color:var(--ink);"></p>
-    <div style="display:flex; gap:10px; justify-content:flex-end;">
-      <button id="customConfirmNo" class="btn secondary">No</button>
-      <button id="customConfirmYes" class="btn">Yes</button>
-    </div>
+    <p id="customConfirmMessage" style="margin:0 0 18px; font-size:14px; line-height:1.5; color:var(--ink);"></p>
+    <div id="customConfirmButtons" style="display:flex; flex-direction:column; gap:8px;"></div>
   </div>
 </div>
 
@@ -522,27 +519,35 @@ const googleProvider = new GoogleAuthProvider();
 
   const openPanels = new Set(); // transient UI state (open forms/pickers/edit boxes), not persisted
 
-  // A Yes/No confirm dialog with our own button labels (native confirm() always
-  // shows "OK/Cancel" and that can't be changed by a website).
-  function customConfirm(message){
+  // A dialog with our own button labels and any number of options (native confirm()
+  // is always exactly "OK/Cancel" and that can't be changed by a website).
+  function customChoice(message, options){
     return new Promise(resolve=>{
       const overlay = document.getElementById('customConfirmOverlay');
       const msgEl = document.getElementById('customConfirmMessage');
-      const yesBtn = document.getElementById('customConfirmYes');
-      const noBtn = document.getElementById('customConfirmNo');
+      const btnContainer = document.getElementById('customConfirmButtons');
       msgEl.textContent = message;
-      overlay.style.display = 'flex';
-      function cleanup(result){
+      btnContainer.innerHTML = '';
+      function cleanup(value){
         overlay.style.display = 'none';
-        yesBtn.removeEventListener('click', onYes);
-        noBtn.removeEventListener('click', onNo);
-        resolve(result);
+        resolve(value);
       }
-      function onYes(){ cleanup(true); }
-      function onNo(){ cleanup(false); }
-      yesBtn.addEventListener('click', onYes);
-      noBtn.addEventListener('click', onNo);
+      options.forEach(opt=>{
+        const btn = document.createElement('button');
+        btn.className = opt.primary ? 'btn full' : 'btn secondary full';
+        btn.textContent = opt.label;
+        btn.addEventListener('click', ()=>cleanup(opt.value));
+        btnContainer.appendChild(btn);
+      });
+      overlay.style.display = 'flex';
     });
+  }
+
+  function customConfirm(message){
+    return customChoice(message, [
+      { label: 'No', value: false },
+      { label: 'Yes', value: true, primary: true }
+    ]);
   }
 
   function defaultState(){
@@ -1798,10 +1803,23 @@ const googleProvider = new GoogleAuthProvider();
       if(!name) return;
       if(!linkedMonthlyCatId){
         const targetGroup = defaultFlexibleGroup();
-        const wantMonthly = await customConfirm(`Also add "${name}" as a Monthly budget category (in ${targetGroup.label}), linked to this one?`);
-        if(wantMonthly){
-          const monthlyBudget = Math.round(budget * 4.33 * 100) / 100;
+        const choice = await customChoice(
+          `Also add "${name}" as a Monthly budget category, linked to this one?`,
+          [
+            { label: `Yes — add to "${targetGroup.label}"`, value: 'existing', primary: true },
+            { label: 'Yes — give it its own new section', value: 'new' },
+            { label: "No, don't add to Monthly", value: 'no' }
+          ]
+        );
+        const monthlyBudget = Math.round(budget * 4.33 * 100) / 100;
+        if(choice === 'existing'){
           const newMonthlyCat = { id: uid(), name, budget: monthlyBudget, group: targetGroup.key };
+          state.monthly.categories.push(newMonthlyCat);
+          linkedMonthlyCatId = newMonthlyCat.id;
+        } else if(choice === 'new'){
+          const newGroupKey = uid();
+          state.monthly.groups.push({ key: newGroupKey, label: name, cycleStartDay: 1 });
+          const newMonthlyCat = { id: uid(), name, budget: monthlyBudget, group: newGroupKey };
           state.monthly.categories.push(newMonthlyCat);
           linkedMonthlyCatId = newMonthlyCat.id;
         }
