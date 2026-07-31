@@ -1193,6 +1193,17 @@ const googleProvider = new GoogleAuthProvider();
   }
   function groupOffset(gKey){ return state.ui.groupOffsets[gKey] || 0; }
 
+  // Picks a sensible existing section for a newly cross-linked category to live in —
+  // prefers a section actually called "everyday", then any non-fixed-payment section,
+  // rather than assuming a specific key/name still exists (it may have been renamed/removed).
+  function defaultFlexibleGroup(){
+    const groups = state.monthly.groups;
+    return groups.find(g=>g.key==='everyday')
+      || groups.find(g=>g.key!=='rent' && g.key!=='bills')
+      || groups[groups.length-1]
+      || { key:'everyday', label:'Everyday spending' };
+  }
+
   function computeGroupCurrentTotals(g){
     const cycleStart = cycleStartForOffset(new Date(), g.cycleStartDay || 1, 0);
     const cycleEnd = cycleEndFor(cycleStart);
@@ -1206,11 +1217,17 @@ const googleProvider = new GoogleAuthProvider();
   function renderMonthlyCatCard(c, startIso, endIso, pacePercent){
     const editKey = `edit-monthlycat-${c.id}`;
     if(openPanels.has(editKey)){
+      const groupOpts = state.monthly.groups.map(g=>`<option value="${g.key}" ${groupOf(c)===g.key?'selected':''}>${escapeHtml(g.label)}</option>`).join('');
       return `
       <div class="cat-card">
         <div class="add-form" style="flex-direction:column; align-items:stretch;">
           <input type="text" id="editName-${c.id}" value="${escapeHtml(c.name)}" placeholder="Category name">
           <input type="number" id="editBudget-${c.id}" value="${c.budget}" step="0.01" min="0" placeholder="Per cycle £">
+          <label style="font-size:11px; color:var(--ink-faint);">Section
+            <select id="editGroup-${c.id}" style="width:100%; padding:8px; border-radius:7px; border:1px solid var(--line); margin-top:4px;">
+              ${groupOpts}
+            </select>
+          </label>
           <div class="row-inline" style="justify-content:flex-end;">
             <button class="btn secondary small" data-action="cancel-edit" data-panel="${editKey}">Cancel</button>
             <button class="btn small" data-action="save-monthlycat-edit" data-cat="${c.id}">Save</button>
@@ -1780,10 +1797,11 @@ const googleProvider = new GoogleAuthProvider();
       let linkedMonthlyCatId = linkSel && linkSel.value ? linkSel.value : null;
       if(!name) return;
       if(!linkedMonthlyCatId){
-        const wantMonthly = await customConfirm(`Also add "${name}" as a Monthly budget category (in Everyday spending), linked to this one?`);
+        const targetGroup = defaultFlexibleGroup();
+        const wantMonthly = await customConfirm(`Also add "${name}" as a Monthly budget category (in ${targetGroup.label}), linked to this one?`);
         if(wantMonthly){
           const monthlyBudget = Math.round(budget * 4.33 * 100) / 100;
-          const newMonthlyCat = { id: uid(), name, budget: monthlyBudget, group: 'everyday' };
+          const newMonthlyCat = { id: uid(), name, budget: monthlyBudget, group: targetGroup.key };
           state.monthly.categories.push(newMonthlyCat);
           linkedMonthlyCatId = newMonthlyCat.id;
         }
@@ -1825,8 +1843,10 @@ const googleProvider = new GoogleAuthProvider();
       if(c){
         const name = document.getElementById('editName-'+c.id).value.trim();
         const budget = parseFloat(document.getElementById('editBudget-'+c.id).value) || 0;
+        const groupSel = document.getElementById('editGroup-'+c.id);
         if(name) c.name = name;
         c.budget = budget;
+        if(groupSel && groupSel.value) c.group = groupSel.value;
       }
       openPanels.delete('edit-monthlycat-'+btn.dataset.cat);
       scheduleSave(); render();
