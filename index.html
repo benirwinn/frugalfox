@@ -89,7 +89,11 @@
   }
   .tab.active{ color: var(--accent); border-bottom-color: var(--accent); }
 
-  .subtabs{ display:flex; gap:8px; margin: 18px auto 18px; max-width:760px; padding: 0 20px; }
+  .subtabs{
+    display:flex; gap:8px; max-width:760px; padding: 10px 20px; margin: 0 auto;
+    position: sticky; top: var(--topbar-height, 110px); z-index: 15;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
   .subtab{
     font-family: var(--font-body); font-weight:600; font-size: 13.5px;
     background: var(--surface); border: 1px solid var(--line); cursor:pointer;
@@ -1528,10 +1532,6 @@ const googleProvider = new GoogleAuthProvider();
           </select>
         </div>
       </div>
-      <button class="change-name" data-action="toggle-panel" data-panel="rawDataDebug" style="margin-bottom:10px;">🔍 Show raw saved data (for troubleshooting)</button>
-      <div id="rawDataDebug" style="display:${openPanels.has('rawDataDebug')?'block':'none'}; margin-bottom:14px;">
-        <textarea readonly style="width:100%; height:160px; font-family:var(--font-mono); font-size:10.5px; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--surface-sunken);">${escapeHtml(JSON.stringify(state.savings.months, null, 2))}</textarea>
-      </div>
       <div class="goal-toggle-row">
         <input type="checkbox" id="goalToggle" ${s.goal?'checked':''} data-action="toggle-goal">
         <label for="goalToggle">Set a savings goal</label>
@@ -2168,7 +2168,15 @@ const googleProvider = new GoogleAuthProvider();
   });
 
   // ---------- Init ----------
+  function updateTopbarHeightVar(){
+    const topbar = document.querySelector('.topbar');
+    if(topbar) document.documentElement.style.setProperty('--topbar-height', topbar.offsetHeight + 'px');
+  }
+  window.addEventListener('resize', updateTopbarHeightVar);
+  setTimeout(updateTopbarHeightVar, 0);
+
   mainTabsEl.innerHTML = `<button class="tab" data-tab="spending">Spending</button><button class="tab" data-tab="savings">Savings</button>`;
+  updateTopbarHeightVar();
   renderSignIn();
 
   onAuthStateChanged(auth, async (user)=>{
@@ -2176,6 +2184,7 @@ const googleProvider = new GoogleAuthProvider();
       currentUser = user;
       state = await loadStateForUser(user.uid);
       if(!state.profile.name) state.profile.name = user.displayName || 'there';
+      updateTopbarHeightVar();
       render();
       renderWelcomeSplash();
     } else {
