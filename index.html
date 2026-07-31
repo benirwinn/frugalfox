@@ -324,6 +324,16 @@
   </div>
 </div>
 
+<div id="customConfirmOverlay" style="display:none; position:fixed; inset:0; background:rgba(21,34,56,0.45); z-index:200; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--surface); border-radius:12px; padding:22px; max-width:360px; width:100%; box-shadow:var(--shadow);">
+    <p id="customConfirmMessage" style="margin:0 0 20px; font-size:14px; line-height:1.5; color:var(--ink);"></p>
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button id="customConfirmNo" class="btn secondary">No</button>
+      <button id="customConfirmYes" class="btn">Yes</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import {
@@ -491,7 +501,7 @@ const googleProvider = new GoogleAuthProvider();
     if(s.savings.columns === undefined){
       s.savings.startingBalance = Number(s.savings.startingBalance)||0;
       s.savings.cycleStartDay = 1;
-      s.savings.planLength = s.savings.planLength || 12;
+      s.savings.planLength = s.savings.planLength || 18;
       s.savings.columns = defaultSavingsColumns();
       s.savings.months = {};
       s.savings.goal = null;
@@ -508,6 +518,29 @@ const googleProvider = new GoogleAuthProvider();
 
   const openPanels = new Set(); // transient UI state (open forms/pickers/edit boxes), not persisted
 
+  // A Yes/No confirm dialog with our own button labels (native confirm() always
+  // shows "OK/Cancel" and that can't be changed by a website).
+  function customConfirm(message){
+    return new Promise(resolve=>{
+      const overlay = document.getElementById('customConfirmOverlay');
+      const msgEl = document.getElementById('customConfirmMessage');
+      const yesBtn = document.getElementById('customConfirmYes');
+      const noBtn = document.getElementById('customConfirmNo');
+      msgEl.textContent = message;
+      overlay.style.display = 'flex';
+      function cleanup(result){
+        overlay.style.display = 'none';
+        yesBtn.removeEventListener('click', onYes);
+        noBtn.removeEventListener('click', onNo);
+        resolve(result);
+      }
+      function onYes(){ cleanup(true); }
+      function onNo(){ cleanup(false); }
+      yesBtn.addEventListener('click', onYes);
+      noBtn.addEventListener('click', onNo);
+    });
+  }
+
   function defaultState(){
     return {
       profile: { name: '' },
@@ -517,7 +550,7 @@ const googleProvider = new GoogleAuthProvider();
       savings: {
         startingBalance: 0,
         cycleStartDay: 1,
-        planLength: 12,
+        planLength: 18,
         columns: defaultSavingsColumns(),
         months: {},
         goal: null
@@ -1343,7 +1376,7 @@ const googleProvider = new GoogleAuthProvider();
   // and never overwrites a future month that already has its own value entered.
   function propagateSavingsValueForward(cycleKey, col, value){
     const editedOffset = savingsOffsetOf(cycleKey);
-    const horizon = state.savings.planLength || 12;
+    const horizon = state.savings.planLength || 18;
     const startOff = Math.max(editedOffset + 1, 0); // never write to anything before today, however far back the edit was
     for(let off = startOff; off <= horizon; off++){
       const futureKey = isoDate(savingsCycleStart(off));
@@ -1485,6 +1518,14 @@ const googleProvider = new GoogleAuthProvider();
         <div class="field">
           <label>Starting balance</label>
           <input type="number" step="0.01" min="0" value="${s.startingBalance || ''}" placeholder="0.00" data-action="set-starting-balance">
+        </div>
+        <div class="field">
+          <label>Plan length</label>
+          <select data-action="set-savings-planlength">
+            <option value="12" ${s.planLength==12?'selected':''}>Next 12 months</option>
+            <option value="18" ${s.planLength==18?'selected':''}>Next 18 months</option>
+            <option value="24" ${s.planLength==24?'selected':''}>Next 24 months</option>
+          </select>
         </div>
       </div>
       <button class="change-name" data-action="toggle-panel" data-panel="rawDataDebug" style="margin-bottom:10px;">🔍 Show raw saved data (for troubleshooting)</button>
@@ -1701,7 +1742,7 @@ const googleProvider = new GoogleAuthProvider();
     render();
   });
 
-  mainEl.addEventListener('click', (e)=>{
+  mainEl.addEventListener('click', async (e)=>{
     const btn = e.target.closest('[data-action]');
     if(!btn) return;
     const action = btn.dataset.action;
@@ -1963,13 +2004,13 @@ const googleProvider = new GoogleAuthProvider();
       }
       const colDef = state.savings.columns.find(c=>c.key===col);
       const colLabel = colDef ? colDef.label : col;
-      if(!confirm(`Repeat ${fmt(value)} for "${colLabel}" from today onward? (Nothing before today is ever changed, and any later month you've already filled in yourself won't be overwritten.)`)) return;
+      if(!(await customConfirm(`Repeat ${fmt(value)} for "${colLabel}" from today onward? (Nothing before today is ever changed, and any later month you've already filled in yourself won't be overwritten.)`))) return;
       propagateSavingsValueForward(cycleKey, col, value);
       scheduleSave(); render();
     }
   });
 
-  mainEl.addEventListener('change', (e)=>{
+  mainEl.addEventListener('change', async (e)=>{
     const el = e.target.closest('[data-action]');
     if(!el) return;
     const action = el.dataset.action;
@@ -2030,6 +2071,10 @@ const googleProvider = new GoogleAuthProvider();
       state.savings.startingBalance = parseFloat(el.value) || 0;
       scheduleSave(); render();
     }
+    else if(action === 'set-savings-planlength'){
+      state.savings.planLength = parseInt(el.value, 10);
+      scheduleSave(); render();
+    }
     else if(action === 'set-savings-value'){
       const cycleKey = el.dataset.cycle, col = el.dataset.col;
       if(!state.savings.months[cycleKey]) state.savings.months[cycleKey] = {};
@@ -2039,7 +2084,7 @@ const googleProvider = new GoogleAuthProvider();
       if(previousValue === undefined && newValue !== 0){
         const colDef = state.savings.columns.find(c=>c.key===col);
         const colLabel = colDef ? colDef.label : col;
-        if(confirm(`Repeat ${fmt(newValue)} for "${colLabel}" from today onward? (Nothing before today is ever changed.)`)){
+        if(await customConfirm(`Repeat ${fmt(newValue)} for "${colLabel}" from today onward? (Nothing before today is ever changed.)`)){
           propagateSavingsValueForward(cycleKey, col, newValue);
         }
       }
