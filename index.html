@@ -848,6 +848,7 @@ const googleProvider = new GoogleAuthProvider();
           <input type="text" id="${formId}-note" placeholder="What was it? (optional)">
           <input type="number" id="${formId}-amount" step="0.01" placeholder="£ (use a minus for refunds)">
           <button class="btn small" data-action="add-expense" data-entrycat="${entryCatId}" data-form="${formId}">Add</button>
+          <button class="btn secondary small" data-action="cancel-edit" data-panel="${formId}">Cancel</button>
         </div>
       </div>
       <div id="${csvPanelId}" style="display:${csvOpen?'block':'none'}; margin-top:8px;">
@@ -1162,7 +1163,10 @@ const googleProvider = new GoogleAuthProvider();
             ${monthlyCategoryOptions(null)}
           </select>
         </label>
-        <button class="btn" data-action="add-weekly-cat">Add</button>
+        <div class="row-inline">
+          <button class="btn" data-action="add-weekly-cat">Add</button>
+          <button class="btn secondary" data-action="cancel-edit" data-panel="addWeeklyForm">Cancel</button>
+        </div>
       </div>
     </div>
     `;
@@ -1321,6 +1325,7 @@ const googleProvider = new GoogleAuthProvider();
             <input type="text" id="newMonthlyName-${g.key}" placeholder="${copy.placeholder}">
             <input type="number" id="newMonthlyBudget-${g.key}" placeholder="Per cycle £" step="0.01" min="0">
             <button class="btn" data-action="add-monthly-cat" data-group="${g.key}">Add</button>
+            <button class="btn secondary" data-action="cancel-edit" data-panel="addMonthlyForm-${g.key}">Cancel</button>
           </div>
         </div>
       </div>`,
@@ -1360,6 +1365,7 @@ const googleProvider = new GoogleAuthProvider();
       <div class="add-form">
         <input type="text" id="newGroupName" placeholder="Section name (e.g. Car, Travel fund, Pets)">
         <button class="btn" data-action="add-group">Add</button>
+        <button class="btn secondary" data-action="cancel-edit" data-panel="addGroupForm">Cancel</button>
       </div>
     </div>
     `;
