@@ -667,6 +667,15 @@ const googleProvider = new GoogleAuthProvider();
     return -1;
   }
 
+  // Bank accounts show a purchase as negative; credit cards show a purchase as
+  // positive (since it adds to what you owe). This flips which convention we use.
+  function csvIsPurchaseRow(imp, amtRaw){
+    return imp.statementType === 'creditcard' ? amtRaw > 0 : amtRaw < 0;
+  }
+  function csvEntryAmount(imp, amtRaw){
+    return imp.statementType === 'creditcard' ? amtRaw : -amtRaw;
+  }
+
   function renderCsvImportPanel(entryCatId){
     const imp = csvImports[entryCatId];
     if(!imp){
@@ -674,7 +683,7 @@ const googleProvider = new GoogleAuthProvider();
         <div class="add-form" style="flex-direction:column; align-items:stretch;">
           <input type="file" accept=".csv,text/csv" data-action="csv-file-selected" data-entrycat="${entryCatId}">
         </div>
-        <div class="suggestion">Pick a CSV export from your bank (with a header row) — you'll get to choose which columns are the date, description and amount next.</div>`;
+        <div class="suggestion">Pick a CSV export from your bank or card provider (with a header row) — you'll get to choose the columns and statement type next.</div>`;
     }
     const headerOpts = (selected) => imp.headers.map((h,i)=>`<option value="${i}" ${selected===i?'selected':''}>${escapeHtml(h || 'Column '+(i+1))}</option>`).join('');
     const previewRows = imp.dataRows.slice(0, 5).map(r=>{
@@ -686,14 +695,22 @@ const googleProvider = new GoogleAuthProvider();
     const previewHtml = previewRows.map(p=>`
       <div class="expense-row">
         <span class="note">${p.date ? fmtDayMonth(parseIso(p.date)) : '(bad date)'} — ${escapeHtml(p.note || '(no note)')}</span>
-        <span class="amt">${isNaN(p.amt) ? '?' : fmt(-p.amt)}</span>
+        <span class="amt">${isNaN(p.amt) ? '?' : fmt(csvEntryAmount(imp, p.amt))}</span>
       </div>`).join('');
     const validCount = imp.dataRows.filter(r=>{
       const date = parseCsvDate(r[imp.dateCol]);
       const amt = parseCsvAmount(r[imp.amountCol]);
-      return date && !isNaN(amt) && amt !== 0 && (!imp.onlyNegative || amt < 0);
+      return date && !isNaN(amt) && amt !== 0 && (!imp.onlyNegative || csvIsPurchaseRow(imp, amt));
     }).length;
     return `
+      <div class="field-row">
+        <div class="field"><label>Statement type</label>
+          <select data-action="csv-set-statementtype" data-entrycat="${entryCatId}">
+            <option value="bank" ${imp.statementType!=='creditcard'?'selected':''}>Bank / debit account</option>
+            <option value="creditcard" ${imp.statementType==='creditcard'?'selected':''}>Credit card</option>
+          </select>
+        </div>
+      </div>
       <div class="field-row">
         <div class="field"><label>Date column</label>
           <select data-action="csv-set-datecol" data-entrycat="${entryCatId}">${headerOpts(imp.dateCol)}</select>
@@ -707,7 +724,7 @@ const googleProvider = new GoogleAuthProvider();
       </div>
       <label class="row-inline" style="font-size:12.5px; margin-bottom:8px;">
         <input type="checkbox" ${imp.onlyNegative?'checked':''} data-action="csv-toggle-negative" data-entrycat="${entryCatId}">
-        Only import purchases — turn off to also bring in refunds and other credits (they'll be added as negative amounts, reducing your total)
+        Only import purchases — turn off to also bring in refunds/payments (they'll be added as negative amounts, reducing your total)
       </label>
       <div class="expense-list">${previewHtml}</div>
       <div class="suggestion">${validCount} transaction(s) will be imported. Showing up to 5 rows as a preview.</div>
@@ -1320,17 +1337,41 @@ const googleProvider = new GoogleAuthProvider();
       if(off < minOffset) minOffset = off;
     });
     const maxOffset = Math.max(maxOffsetWanted, 0);
+
+    function hasActualData(key){
+      const m = state.savings.months[key];
+      return !!(m && Object.keys(m).length > 0);
+    }
+
+    // Trailing average of the last (up to) 6 actual months at or before now, used to
+    // project future months that haven't been logged yet.
+    const actualNets = [];
+    for(let off = 0; off >= minOffset && actualNets.length < 6; off--){
+      const key = isoDate(savingsCycleStart(off));
+      if(hasActualData(key)) actualNets.push(savingsNet(state.savings.months[key]));
+    }
+    const avgNet = actualNets.length ? actualNets.reduce((a,b)=>a+b,0)/actualNets.length : null;
+
     let balance = Number(state.savings.startingBalance)||0;
     const series = [];
     for(let off=minOffset; off<=maxOffset; off++){
       const cs = savingsCycleStart(off);
       const key = isoDate(cs);
       const m = state.savings.months[key] || {};
-      const net = savingsNet(m);
+      const actual = hasActualData(key);
+      let net, projected = false;
+      if(actual){
+        net = savingsNet(m);
+      } else if(off >= 0 && avgNet !== null){
+        net = avgNet;
+        projected = true;
+      } else {
+        net = 0;
+      }
       balance += net;
-      series.push({ offset: off, key, net, balance, data: m });
+      series.push({ offset: off, key, net, balance, data: m, projected });
     }
-    return { series, minOffset, maxOffset };
+    return { series, minOffset, maxOffset, avgNet };
   }
 
   function renderSavings(){
@@ -1450,6 +1491,7 @@ const googleProvider = new GoogleAuthProvider();
         <div class="stat"><div class="label">Saved this cycle</div><div class="value ${netThisCycle<0?'spend':'grow'}">${fmt(netThisCycle)}</div></div>
         <div class="stat"><div class="label">Balance</div><div class="value grow">${fmt(current.balance)}</div></div>
       </div>
+      ${current.projected ? `<div class="suggestion">Nothing logged for this cycle yet — the balance above assumes about ${fmt(current.net)} based on your recent average, and will update once you fill in real numbers.</div>` : ''}
     </div>
 
     <div class="card">
@@ -1508,11 +1550,15 @@ const googleProvider = new GoogleAuthProvider();
     if(!checkpoints.length){
       return `<div class="suggestion">Once your plan stretches to a March, June, September or December, your balance at each will show up here.</div>`;
     }
+    const anyProjected = checkpoints.some(cp=>cp.projected);
     const items = checkpoints.map(cp=>{
       const label = parseIso(cp.key).toLocaleDateString('en-GB', {month:'long', year:'numeric'});
-      return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value ${cp.balance<0?'spend':'grow'}">${fmt(cp.balance)}</div></div>`;
+      const valueColor = cp.projected ? '' : (cp.balance<0?'spend':'grow');
+      const style = cp.projected ? 'style="color:#FFB300;"' : '';
+      return `<div class="stat"><div class="label">${escapeHtml(label)}${cp.projected?' <span title="Estimated from your recent average — no data logged yet for this cycle">(projected)</span>':''}</div><div class="value ${valueColor}" ${style}>${fmt(cp.balance)}</div></div>`;
     }).join('');
-    return `<div class="summary-row" style="flex-wrap:wrap; row-gap:14px;">${items}</div>`;
+    return `<div class="summary-row" style="flex-wrap:wrap; row-gap:14px;">${items}</div>
+    ${anyProjected ? `<div class="suggestion">Projected figures are estimated from your average savings over recent months — log a cycle's actual numbers and they'll update automatically.</div>` : ''}`;
   }
 
   function renderSavingsChartSvg(series){
@@ -1534,6 +1580,22 @@ const googleProvider = new GoogleAuthProvider();
     const areaPts = `${xOf(0).toFixed(1)},${yOf(minV).toFixed(1)} ${linePts} ${xOf(n-1).toFixed(1)},${yOf(minV).toFixed(1)}`;
     const zeroY = yOf(0).toFixed(1);
 
+    const firstProjectedIdx = series.findIndex(s=>s.projected);
+    let lineHtml;
+    if(firstProjectedIdx === -1){
+      lineHtml = `<polyline points="${linePts}" fill="none" stroke="#00B87C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />`;
+    } else {
+      const solidPts = series.slice(0, firstProjectedIdx+1).map((s,i)=>`${xOf(i).toFixed(1)},${yOf(s.balance).toFixed(1)}`).join(' ');
+      const dashedPts = series.slice(firstProjectedIdx).map((s,i)=>{
+        const realIdx = firstProjectedIdx + i;
+        return `${xOf(realIdx).toFixed(1)},${yOf(s.balance).toFixed(1)}`;
+      }).join(' ');
+      lineHtml = `
+        <polyline points="${solidPts}" fill="none" stroke="#00B87C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+        <polyline points="${dashedPts}" fill="none" stroke="#00B87C" stroke-width="2.5" stroke-dasharray="6,4" stroke-linejoin="round" stroke-linecap="round" />
+      `;
+    }
+
     const quarterIdxs = series.map((s,i)=>({i, isQ: isQuarterEndMonth(parseIso(s.key))})).filter(o=>o.isQ).map(o=>o.i);
     let idxs;
     if(quarterIdxs.length >= 2){
@@ -1549,14 +1611,14 @@ const googleProvider = new GoogleAuthProvider();
     }
     const quarterSet = new Set(quarterIdxs);
     const xLabels = idxs.map(i => `<text x="${xOf(i).toFixed(1)}" y="${h-6}" font-size="9" fill="#93A4C2" text-anchor="middle" font-family="Inter, sans-serif">${cycleShortLabel(series[i].key)}</text>`).join('');
-    const dots = idxs.map(i => `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(series[i].balance).toFixed(1)}" r="${quarterSet.has(i)?3.6:2.8}" fill="${quarterSet.has(i)?'#FFB300':'#00B87C'}" />`).join('');
+    const dots = idxs.map(i => `<circle cx="${xOf(i).toFixed(1)}" cy="${yOf(series[i].balance).toFixed(1)}" r="${quarterSet.has(i)?3.6:2.8}" fill="${quarterSet.has(i)?'#FFB300':'#00B87C'}" ${series[i].projected?'fill-opacity="0.55"':''} />`).join('');
     const yTop = `<text x="${padL-8}" y="${padT+4}" font-size="9" fill="#93A4C2" text-anchor="end" font-family="'IBM Plex Mono', monospace">${fmtCompact(maxV)}</text>`;
     const yBottom = `<text x="${padL-8}" y="${h-padB}" font-size="9" fill="#93A4C2" text-anchor="end" font-family="'IBM Plex Mono', monospace">${fmtCompact(minV)}</text>`;
 
     return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%; height:100%; display:block;">
       <line x1="${padL}" y1="${zeroY}" x2="${w-padR}" y2="${zeroY}" stroke="#D3E3F7" stroke-width="1" stroke-dasharray="3,3" />
       <polygon points="${areaPts}" fill="#DEF9EC" />
-      <polyline points="${linePts}" fill="none" stroke="#00B87C" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+      ${lineHtml}
       ${dots}
       ${yTop}${yBottom}${xLabels}
     </svg>`;
@@ -1794,8 +1856,8 @@ const googleProvider = new GoogleAuthProvider();
         const date = parseCsvDate(r[imp.dateCol]);
         const amtRaw = parseCsvAmount(r[imp.amountCol]);
         if(!date || isNaN(amtRaw) || amtRaw === 0) return;
-        if(imp.onlyNegative && amtRaw >= 0) return;
-        const amount = -amtRaw; // bank debit (negative) -> positive spend; bank credit (positive) -> negative refund
+        if(imp.onlyNegative && !csvIsPurchaseRow(imp, amtRaw)) return;
+        const amount = csvEntryAmount(imp, amtRaw);
         const note = imp.noteCol>=0 ? (r[imp.noteCol]||'').trim() : '';
         state.entries[entryCatId].push({ id: uid(), date, note, amount });
         count++;
@@ -1860,13 +1922,17 @@ const googleProvider = new GoogleAuthProvider();
           dateCol: dateCol>=0 ? dateCol : 0,
           noteCol: noteCol>=0 ? noteCol : (headers.length>1 ? 1 : 0),
           amountCol: amountCol>=0 ? amountCol : (headers.length>2 ? 2 : headers.length-1),
-          onlyNegative: true
+          onlyNegative: true,
+          statementType: 'bank'
         };
         render();
       }).catch(err=>{
         console.error('CSV read failed', err);
         alert("Couldn't read that file — make sure it's a plain CSV export.");
       });
+    }
+    else if(action === 'csv-set-statementtype'){
+      const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.statementType = el.value; render(); }
     }
     else if(action === 'csv-set-datecol'){
       const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.dateCol = parseInt(el.value,10); render(); }
