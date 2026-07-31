@@ -1332,6 +1332,27 @@ const googleProvider = new GoogleAuthProvider();
   function savingsCycleStart(offset){
     return cycleStartForOffset(new Date(), state.savings.cycleStartDay || 1, offset);
   }
+
+  function savingsOffsetOf(cycleKey){
+    const nowStart = savingsCycleStart(0);
+    const d = parseIso(cycleKey);
+    return (d.getFullYear()-nowStart.getFullYear())*12 + (d.getMonth()-nowStart.getMonth());
+  }
+
+  // Fills the same value into future cycles only — never touches past months,
+  // and never overwrites a future month that already has its own value entered.
+  function propagateSavingsValueForward(cycleKey, col, value){
+    const editedOffset = savingsOffsetOf(cycleKey);
+    const horizon = state.savings.planLength || 12;
+    for(let off = editedOffset+1; off <= editedOffset+horizon; off++){
+      const futureKey = isoDate(savingsCycleStart(off));
+      if(!state.savings.months[futureKey]) state.savings.months[futureKey] = {};
+      if(state.savings.months[futureKey][col] === undefined){
+        state.savings.months[futureKey][col] = value;
+      }
+    }
+  }
+
   function savingsNet(monthData){
     const m = monthData || {};
     let net = 0;
@@ -1417,8 +1438,11 @@ const googleProvider = new GoogleAuthProvider();
       return `
       <div class="savings-row">
         ${labelHtml}
-        <input class="amount-input" type="number" step="0.01" min="0" value="${m[col.key] || ''}" placeholder="0.00"
-          data-action="set-savings-value" data-cycle="${current.key}" data-col="${col.key}" style="width:110px;">
+        <span class="row-inline">
+          <input class="amount-input" type="number" step="0.01" min="0" value="${m[col.key] || ''}" placeholder="0.00"
+            data-action="set-savings-value" data-cycle="${current.key}" data-col="${col.key}" style="width:110px;">
+          <button class="iconbtn" data-action="repeat-savings-forward" data-cycle="${current.key}" data-col="${col.key}" title="Repeat this value in future months (past months untouched)">↻</button>
+        </span>
       </div>`;
     }).join('');
 
@@ -1924,6 +1948,19 @@ const googleProvider = new GoogleAuthProvider();
       state.savings.goal = null;
       scheduleSave(); render();
     }
+    else if(action === 'repeat-savings-forward'){
+      const cycleKey = btn.dataset.cycle, col = btn.dataset.col;
+      const value = (state.savings.months[cycleKey]||{})[col];
+      if(value === undefined || value === null || value === ''){
+        alert('Enter a value in this field first, then repeat it forward.');
+        return;
+      }
+      const colDef = state.savings.columns.find(c=>c.key===col);
+      const colLabel = colDef ? colDef.label : col;
+      if(!confirm(`Repeat ${fmt(value)} for "${colLabel}" in future months too? (Past months are never changed, and months you've already filled in yourself won't be overwritten.)`)) return;
+      propagateSavingsValueForward(cycleKey, col, value);
+      scheduleSave(); render();
+    }
   });
 
   mainEl.addEventListener('change', (e)=>{
@@ -1990,7 +2027,16 @@ const googleProvider = new GoogleAuthProvider();
     else if(action === 'set-savings-value'){
       const cycleKey = el.dataset.cycle, col = el.dataset.col;
       if(!state.savings.months[cycleKey]) state.savings.months[cycleKey] = {};
-      state.savings.months[cycleKey][col] = parseFloat(el.value) || 0;
+      const previousValue = state.savings.months[cycleKey][col];
+      const newValue = parseFloat(el.value) || 0;
+      state.savings.months[cycleKey][col] = newValue;
+      if(previousValue === undefined && newValue !== 0){
+        const colDef = state.savings.columns.find(c=>c.key===col);
+        const colLabel = colDef ? colDef.label : col;
+        if(confirm(`Repeat ${fmt(newValue)} for "${colLabel}" in future months too? (Past months are never changed.)`)){
+          propagateSavingsValueForward(cycleKey, col, newValue);
+        }
+      }
       scheduleSave(); render();
     }
     else if(action === 'toggle-goal'){
