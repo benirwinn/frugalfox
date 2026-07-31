@@ -606,6 +606,117 @@ const googleProvider = new GoogleAuthProvider();
     return state.monthly.categories.find(c=>c.id===catId);
   }
 
+  // ---------- CSV import (bank statement transactions -> expense entries) ----------
+  const csvImports = {}; // entryCatId -> {headers, dataRows, dateCol, noteCol, amountCol, onlyNegative} — transient, not persisted
+
+  function parseCsv(text){
+    const rows = [];
+    let row = [], cell = '', inQuotes = false;
+    for(let i=0;i<text.length;i++){
+      const c = text[i];
+      if(inQuotes){
+        if(c === '"'){
+          if(text[i+1] === '"'){ cell += '"'; i++; }
+          else inQuotes = false;
+        } else cell += c;
+      } else {
+        if(c === '"') inQuotes = true;
+        else if(c === ','){ row.push(cell); cell = ''; }
+        else if(c === '\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+        else if(c === '\r'){ /* skip; \n follows */ }
+        else cell += c;
+      }
+    }
+    if(cell.length || row.length){ row.push(cell); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ''));
+  }
+
+  function parseCsvAmount(str){
+    if(str === undefined || str === null) return NaN;
+    let s = String(str).trim();
+    if(!s) return NaN;
+    let neg = false;
+    if(s.startsWith('(') && s.endsWith(')')){ neg = true; s = s.slice(1,-1); }
+    s = s.replace(/[£$€,]/g, '').trim();
+    if(s.startsWith('-')){ neg = true; s = s.slice(1); }
+    else if(s.startsWith('+')){ s = s.slice(1); }
+    const n = parseFloat(s);
+    if(isNaN(n)) return NaN;
+    return neg ? -n : n;
+  }
+
+  function parseCsvDate(str){
+    if(!str) return null;
+    const s = String(str).trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(m) return isoDate(new Date(+m[1], +m[2]-1, +m[3]));
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if(m) return isoDate(new Date(+m[3], +m[2]-1, +m[1]));
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+    if(m) return isoDate(new Date(2000+(+m[3]), +m[2]-1, +m[1]));
+    const d = new Date(s);
+    if(!isNaN(d.getTime())) return isoDate(d);
+    return null;
+  }
+
+  function guessCsvColumn(headers, keywords){
+    for(let i=0;i<headers.length;i++){
+      const h = (headers[i]||'').toLowerCase();
+      if(keywords.some(k=>h.includes(k))) return i;
+    }
+    return -1;
+  }
+
+  function renderCsvImportPanel(entryCatId){
+    const imp = csvImports[entryCatId];
+    if(!imp){
+      return `
+        <div class="add-form" style="flex-direction:column; align-items:stretch;">
+          <input type="file" accept=".csv,text/csv" data-action="csv-file-selected" data-entrycat="${entryCatId}">
+        </div>
+        <div class="suggestion">Pick a CSV export from your bank (with a header row) — you'll get to choose which columns are the date, description and amount next.</div>`;
+    }
+    const headerOpts = (selected) => imp.headers.map((h,i)=>`<option value="${i}" ${selected===i?'selected':''}>${escapeHtml(h || 'Column '+(i+1))}</option>`).join('');
+    const previewRows = imp.dataRows.slice(0, 5).map(r=>{
+      const date = parseCsvDate(r[imp.dateCol]);
+      const note = imp.noteCol>=0 ? (r[imp.noteCol]||'') : '';
+      const amt = parseCsvAmount(r[imp.amountCol]);
+      return { date, note, amt };
+    });
+    const previewHtml = previewRows.map(p=>`
+      <div class="expense-row">
+        <span class="note">${p.date ? fmtDayMonth(parseIso(p.date)) : '(bad date)'} — ${escapeHtml(p.note || '(no note)')}</span>
+        <span class="amt">${isNaN(p.amt) ? '?' : fmt(Math.abs(p.amt))}</span>
+      </div>`).join('');
+    const validCount = imp.dataRows.filter(r=>{
+      const date = parseCsvDate(r[imp.dateCol]);
+      const amt = parseCsvAmount(r[imp.amountCol]);
+      return date && !isNaN(amt) && amt !== 0 && (!imp.onlyNegative || amt < 0);
+    }).length;
+    return `
+      <div class="field-row">
+        <div class="field"><label>Date column</label>
+          <select data-action="csv-set-datecol" data-entrycat="${entryCatId}">${headerOpts(imp.dateCol)}</select>
+        </div>
+        <div class="field"><label>Description column</label>
+          <select data-action="csv-set-notecol" data-entrycat="${entryCatId}">${headerOpts(imp.noteCol)}</select>
+        </div>
+        <div class="field"><label>Amount column</label>
+          <select data-action="csv-set-amountcol" data-entrycat="${entryCatId}">${headerOpts(imp.amountCol)}</select>
+        </div>
+      </div>
+      <label class="row-inline" style="font-size:12.5px; margin-bottom:8px;">
+        <input type="checkbox" ${imp.onlyNegative?'checked':''} data-action="csv-toggle-negative" data-entrycat="${entryCatId}">
+        Only import negative amounts (money out) — turn off if every row in this file is already a purchase
+      </label>
+      <div class="expense-list">${previewHtml}</div>
+      <div class="suggestion">${validCount} transaction(s) will be imported. Showing up to 5 rows as a preview.</div>
+      <div class="row-inline" style="justify-content:flex-end; margin-top:10px;">
+        <button class="btn secondary small" data-action="csv-cancel" data-entrycat="${entryCatId}">Cancel</button>
+        <button class="btn small" data-action="csv-import" data-entrycat="${entryCatId}">Import ${validCount} transaction(s)</button>
+      </div>`;
+  }
+
   // ---------- Runway bar (signature component) ----------
   function runwayBar(budget, spent, pacePercent){
     const b = Number(budget)||0;
@@ -639,16 +750,35 @@ const googleProvider = new GoogleAuthProvider();
     const entries = entriesInRange(entryCatId, rangeStart, rangeEnd).slice().sort((a,b)=> a.date < b.date ? 1 : -1);
     const formId = `expenseForm-${domSuffix}`;
     const isOpen = openPanels.has(formId);
-    const rows = entries.map(e => `
+    const rows = entries.map(e => {
+      const editKey = `edit-expense-${entryCatId}-${e.id}`;
+      if(openPanels.has(editKey)){
+        return `
+        <div class="expense-row" style="gap:6px;">
+          <input type="date" id="editExpenseDate-${e.id}" value="${e.date}" style="max-width:120px; font-family:var(--font-mono); font-size:11.5px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
+          <input type="text" id="editExpenseNote-${e.id}" value="${escapeHtml(e.note||'')}" placeholder="Note" style="flex:1; min-width:60px; font-size:12px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
+          <input type="number" id="editExpenseAmount-${e.id}" value="${e.amount}" step="0.01" min="0" style="width:70px; font-family:var(--font-mono); font-size:11.5px; padding:5px 6px; border:1px solid var(--line); border-radius:6px;">
+          <button class="iconbtn" data-action="save-expense-edit" data-entrycat="${entryCatId}" data-entry="${e.id}" title="Save">✔</button>
+          <button class="iconbtn" data-action="cancel-edit" data-panel="${editKey}" title="Cancel">✕</button>
+        </div>`;
+      }
+      return `
       <div class="expense-row">
         <span class="note">${escapeHtml(e.note || 'Expense')} <span class="expense-date">${fmtDayMonth(parseIso(e.date))}</span></span>
         <span class="amt">${fmt(e.amount)}</span>
+        <button class="iconbtn" data-action="toggle-panel" data-panel="${editKey}" title="Edit">✏️</button>
         <button class="iconbtn" data-action="delete-expense" data-entrycat="${entryCatId}" data-entry="${e.id}" title="Remove">✕</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     const dateDefault = defaultDate || isoDate(new Date());
+    const csvPanelId = `csvImport-${domSuffix}`;
+    const csvOpen = openPanels.has(csvPanelId);
     return `
       ${entries.length ? `<div class="expense-list">${rows}</div>` : ''}
-      <button class="add-toggle small" data-action="toggle-panel" data-panel="${formId}">+ Add expense</button>
+      <div class="row-inline" style="flex-wrap:wrap; margin-top:8px;">
+        <button class="add-toggle small" data-action="toggle-panel" data-panel="${formId}">+ Add expense</button>
+        <button class="add-toggle small" data-action="toggle-panel" data-panel="${csvPanelId}">📄 Import from CSV</button>
+      </div>
       <div id="${formId}" style="display:${isOpen?'block':'none'}; margin-top:8px;">
         <div class="add-form">
           <input type="date" id="${formId}-date" value="${dateDefault}" style="max-width:135px;">
@@ -656,6 +786,9 @@ const googleProvider = new GoogleAuthProvider();
           <input type="number" id="${formId}-amount" step="0.01" min="0" placeholder="£">
           <button class="btn small" data-action="add-expense" data-entrycat="${entryCatId}" data-form="${formId}">Add</button>
         </div>
+      </div>
+      <div id="${csvPanelId}" style="display:${csvOpen?'block':'none'}; margin-top:8px;">
+        ${renderCsvImportPanel(entryCatId)}
       </div>`;
   }
 
@@ -1629,6 +1762,47 @@ const googleProvider = new GoogleAuthProvider();
       }
       scheduleSave(); render();
     }
+    else if(action === 'save-expense-edit'){
+      const entryCatId = btn.dataset.entrycat, entryId = btn.dataset.entry;
+      const dateInput = document.getElementById('editExpenseDate-'+entryId);
+      const noteInput = document.getElementById('editExpenseNote-'+entryId);
+      const amountInput = document.getElementById('editExpenseAmount-'+entryId);
+      const amount = parseFloat(amountInput.value);
+      if(!amount || amount <= 0) return;
+      const list = state.entries[entryCatId];
+      const entry = list && list.find(e=>e.id===entryId);
+      if(entry){
+        entry.date = dateInput.value || entry.date;
+        entry.note = noteInput.value.trim();
+        entry.amount = amount;
+      }
+      openPanels.delete(`edit-expense-${entryCatId}-${entryId}`);
+      scheduleSave(); render();
+    }
+    else if(action === 'csv-cancel'){
+      delete csvImports[btn.dataset.entrycat];
+      render();
+    }
+    else if(action === 'csv-import'){
+      const entryCatId = btn.dataset.entrycat;
+      const imp = csvImports[entryCatId];
+      if(!imp) return;
+      if(!state.entries[entryCatId]) state.entries[entryCatId] = [];
+      let count = 0;
+      imp.dataRows.forEach(r=>{
+        const date = parseCsvDate(r[imp.dateCol]);
+        const amtRaw = parseCsvAmount(r[imp.amountCol]);
+        if(!date || isNaN(amtRaw) || amtRaw === 0) return;
+        if(imp.onlyNegative && amtRaw >= 0) return;
+        const amount = Math.abs(amtRaw);
+        const note = imp.noteCol>=0 ? (r[imp.noteCol]||'').trim() : '';
+        state.entries[entryCatId].push({ id: uid(), date, note, amount });
+        count++;
+      });
+      delete csvImports[entryCatId];
+      scheduleSave(); render();
+      alert(count > 0 ? `Imported ${count} transaction(s).` : 'No matching transactions found to import — check the column mapping.');
+    }
 
     else if(action === 'save-savingscol-edit'){
       const col = state.savings.columns.find(c=>c.key===btn.dataset.col);
@@ -1667,6 +1841,43 @@ const googleProvider = new GoogleAuthProvider();
     if(action === 'set-income'){
       state.monthly.income = parseFloat(el.value) || 0;
       scheduleSave(); render();
+    }
+    else if(action === 'csv-file-selected'){
+      const entryCatId = el.dataset.entrycat;
+      const file = el.files && el.files[0];
+      if(!file) return;
+      file.text().then(text=>{
+        const rows = parseCsv(text);
+        if(rows.length < 2){ alert("Couldn't find any rows in that file — make sure it's a plain CSV export with a header row."); return; }
+        const headers = rows[0];
+        const dataRows = rows.slice(1);
+        const dateCol = guessCsvColumn(headers, ['date']);
+        const amountCol = guessCsvColumn(headers, ['amount', 'value', 'debit', 'money out', 'out']);
+        const noteCol = guessCsvColumn(headers, ['description', 'narrative', 'details', 'memo', 'payee', 'reference']);
+        csvImports[entryCatId] = {
+          headers, dataRows,
+          dateCol: dateCol>=0 ? dateCol : 0,
+          noteCol: noteCol>=0 ? noteCol : (headers.length>1 ? 1 : 0),
+          amountCol: amountCol>=0 ? amountCol : (headers.length>2 ? 2 : headers.length-1),
+          onlyNegative: true
+        };
+        render();
+      }).catch(err=>{
+        console.error('CSV read failed', err);
+        alert("Couldn't read that file — make sure it's a plain CSV export.");
+      });
+    }
+    else if(action === 'csv-set-datecol'){
+      const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.dateCol = parseInt(el.value,10); render(); }
+    }
+    else if(action === 'csv-set-notecol'){
+      const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.noteCol = parseInt(el.value,10); render(); }
+    }
+    else if(action === 'csv-set-amountcol'){
+      const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.amountCol = parseInt(el.value,10); render(); }
+    }
+    else if(action === 'csv-toggle-negative'){
+      const imp = csvImports[el.dataset.entrycat]; if(imp){ imp.onlyNegative = el.checked; render(); }
     }
     else if(action === 'set-split-budget'){
       const weekKey = el.dataset.week, catId = el.dataset.cat, part = el.dataset.part;
