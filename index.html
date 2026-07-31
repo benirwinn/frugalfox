@@ -790,8 +790,17 @@ const googleProvider = new GoogleAuthProvider();
     const dateDefault = defaultDate || isoDate(new Date());
     const csvPanelId = `csvImport-${domSuffix}`;
     const csvOpen = openPanels.has(csvPanelId);
+    const listKey = `expenselist-${domSuffix}`;
+    const listOpen = openPanels.has(listKey);
+    const listSection = entries.length ? `
+      <button class="add-toggle small" data-action="toggle-panel" data-panel="${listKey}" style="width:100%; justify-content:space-between;">
+        <span>${entries.length} transaction${entries.length===1?'':'s'} — ${fmt(sumEntries(entries))}</span>
+        <span>${listOpen ? '▲' : '▼'}</span>
+      </button>
+      ${listOpen ? `<div class="expense-list">${rows}</div>` : ''}
+    ` : '';
     return `
-      ${entries.length ? `<div class="expense-list">${rows}</div>` : ''}
+      ${listSection}
       <div class="row-inline" style="flex-wrap:wrap; margin-top:8px;">
         <button class="add-toggle small" data-action="toggle-panel" data-panel="${formId}">+ Add expense</button>
         <button class="add-toggle small" data-action="toggle-panel" data-panel="${csvPanelId}">📄 Import from CSV</button>
