@@ -1154,6 +1154,7 @@ const googleProvider = new GoogleAuthProvider();
     const entries = entriesInRange(c.id, startIso, endIso);
     const spent = sumEntries(entries);
     const status = paceStatus(c.budget, spent, pacePercent);
+    const isFixedPayment = groupOf(c) === 'rent' || groupOf(c) === 'bills';
     return `
     <div class="cat-card">
       <div class="cat-head">
@@ -1169,7 +1170,7 @@ const googleProvider = new GoogleAuthProvider();
       </div>
       ${runwayBar(c.budget, spent, pacePercent)}
       <div class="cat-foot">
-        <span class="pace-status ${status.cls}">${status.text}</span>
+        ${isFixedPayment ? '<span></span>' : `<span class="pace-status ${status.cls}">${status.text}</span>`}
         <span>${fmt(spent)} of ${fmt(c.budget)}</span>
       </div>
       ${renderExpenseBlock(c.id, startIso, endIso, `monthly-${groupOf(c)}-${startIso}-${c.id}`, isoDate(new Date()))}
