@@ -1771,8 +1771,17 @@ const googleProvider = new GoogleAuthProvider();
       const name = document.getElementById('newWeeklyName').value.trim();
       const budget = parseFloat(document.getElementById('newWeeklyBudget').value) || 0;
       const linkSel = document.getElementById('newWeeklyLink');
-      const linkedMonthlyCatId = linkSel && linkSel.value ? linkSel.value : null;
+      let linkedMonthlyCatId = linkSel && linkSel.value ? linkSel.value : null;
       if(!name) return;
+      if(!linkedMonthlyCatId){
+        const wantMonthly = await customConfirm(`Also add "${name}" as a Monthly budget category (in Everyday spending), linked to this one?`);
+        if(wantMonthly){
+          const monthlyBudget = Math.round(budget * 4.33 * 100) / 100;
+          const newMonthlyCat = { id: uid(), name, budget: monthlyBudget, group: 'everyday' };
+          state.monthly.categories.push(newMonthlyCat);
+          linkedMonthlyCatId = newMonthlyCat.id;
+        }
+      }
       state.weekly.categories.push({ id: uid(), name, budget, linkedMonthlyCatId });
       openPanels.delete('addWeeklyForm');
       scheduleSave(); render();
@@ -1795,8 +1804,14 @@ const googleProvider = new GoogleAuthProvider();
       const name = document.getElementById('newMonthlyName-' + group).value.trim();
       const budget = parseFloat(document.getElementById('newMonthlyBudget-' + group).value) || 0;
       if(!name) return;
-      state.monthly.categories.push({ id: uid(), name, budget, group });
+      const newMonthlyCat = { id: uid(), name, budget, group };
+      state.monthly.categories.push(newMonthlyCat);
       openPanels.delete('addMonthlyForm-'+group);
+      const wantWeekly = await customConfirm(`Also add "${name}" as a Weekly budget category, linked to this one?`);
+      if(wantWeekly){
+        const weeklyBudget = Math.round((budget / 4.33) * 100) / 100;
+        state.weekly.categories.push({ id: uid(), name, budget: weeklyBudget, linkedMonthlyCatId: newMonthlyCat.id });
+      }
       scheduleSave(); render();
     }
     else if(action === 'save-monthlycat-edit'){
