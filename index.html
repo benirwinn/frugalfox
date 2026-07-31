@@ -1344,7 +1344,8 @@ const googleProvider = new GoogleAuthProvider();
   function propagateSavingsValueForward(cycleKey, col, value){
     const editedOffset = savingsOffsetOf(cycleKey);
     const horizon = state.savings.planLength || 12;
-    for(let off = editedOffset+1; off <= editedOffset+horizon; off++){
+    const startOff = Math.max(editedOffset + 1, 0); // never write to anything before today, however far back the edit was
+    for(let off = startOff; off <= horizon; off++){
       const futureKey = isoDate(savingsCycleStart(off));
       if(!state.savings.months[futureKey]) state.savings.months[futureKey] = {};
       if(state.savings.months[futureKey][col] === undefined){
@@ -1957,7 +1958,7 @@ const googleProvider = new GoogleAuthProvider();
       }
       const colDef = state.savings.columns.find(c=>c.key===col);
       const colLabel = colDef ? colDef.label : col;
-      if(!confirm(`Repeat ${fmt(value)} for "${colLabel}" in future months too? (Past months are never changed, and months you've already filled in yourself won't be overwritten.)`)) return;
+      if(!confirm(`Repeat ${fmt(value)} for "${colLabel}" from today onward? (Nothing before today is ever changed, and any later month you've already filled in yourself won't be overwritten.)`)) return;
       propagateSavingsValueForward(cycleKey, col, value);
       scheduleSave(); render();
     }
@@ -2033,7 +2034,7 @@ const googleProvider = new GoogleAuthProvider();
       if(previousValue === undefined && newValue !== 0){
         const colDef = state.savings.columns.find(c=>c.key===col);
         const colLabel = colDef ? colDef.label : col;
-        if(confirm(`Repeat ${fmt(newValue)} for "${colLabel}" in future months too? (Past months are never changed.)`)){
+        if(confirm(`Repeat ${fmt(newValue)} for "${colLabel}" from today onward? (Nothing before today is ever changed.)`)){
           propagateSavingsValueForward(cycleKey, col, newValue);
         }
       }
